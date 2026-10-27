@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: securecode-api
+    runtime: node
+    rootDir: practice/backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "true"
+      - key: FRONTEND_ORIGINS
+        sync: false

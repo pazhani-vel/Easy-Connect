@@ -1,26 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import {
-  ArrowDown,
   ArrowLeft,
   ArrowRight,
   Check,
-  CheckCheck,
   CircleAlert,
   Clock3,
   Copy,
-  Fingerprint,
   KeyRound,
   Link2,
   LockKeyhole,
   LogOut,
-  MessageSquareText,
-  Plus,
   Send,
   ShieldCheck,
-  Sparkles,
   Trash2,
-  UsersRound,
+  Users,
   X,
 } from 'lucide-react';
 import { decryptMessage } from './crypto/decrypt.js';
@@ -29,19 +23,16 @@ import { deriveRoomKey, randomRoomSecret } from './crypto/keyDerivation.js';
 import { apiRequest, getSocketUrl } from './services/api.js';
 import './App.css';
 
-const ROOM_CODE_PATTERN = /^[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/u;
-const SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
-
 function emitWithAck(socket, event, payload, timeoutMs = 8_000) {
   return new Promise((resolve, reject) => {
     if (!socket?.connected) {
-      reject(new Error('Connection lost. Wait for reconnection and try again.'));
+      reject(new Error('Connection lost. Please wait for reconnection.'));
       return;
     }
-    const timer = window.setTimeout(() => reject(new Error('The server did not respond. Please try again.')), timeoutMs);
+    const timer = window.setTimeout(() => reject(new Error('Server did not respond in time.')), timeoutMs);
     socket.emit(event, payload, (response) => {
       window.clearTimeout(timer);
-      if (!response?.ok) reject(new Error(response?.error || 'The request could not be completed.'));
+      if (!response?.ok) reject(new Error(response?.error || 'Request failed.'));
       else resolve(response);
     });
   });
@@ -52,10 +43,14 @@ function formatTime(timestamp) {
 }
 
 function App() {
-  const [initialInvitation] = useState(() => new URLSearchParams(
-    typeof window === 'undefined' ? '' : window.location.hash.slice(1),
+  const [initialInvitation] = useState(() => {
+    if (typeof window === 'undefined') return new URLSearchParams();
+    return new URLSearchParams(window.location.hash.slice(1));
+  });
+
+  const [page, setPage] = useState(() => (
+    initialInvitation.has('room') || initialInvitation.has('secret') ? 'join' : 'home'
   ));
-  const [page, setPage] = useState(() => initialInvitation.has('room') || initialInvitation.has('secret') ? 'join' : 'home');
   const [room, setRoom] = useState(null);
   const [messages, setMessages] = useState([]);
   const [connection, setConnection] = useState('disconnected');
@@ -64,7 +59,7 @@ function App() {
   const [joinSecret, setJoinSecret] = useState(() => initialInvitation.get('secret') || '');
   const [joinError, setJoinError] = useState(() => (
     initialInvitation.has('room') && !initialInvitation.has('secret')
-      ? 'This invitation link is incomplete. Ask the room creator for a new link.'
+      ? 'Invite link is missing the secret. Please enter it manually.'
       : ''
   ));
   const [roomError, setRoomError] = useState('');
@@ -79,7 +74,7 @@ function App() {
   function notify(message) {
     setToast(message);
     window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(''), 2_800);
+    toastTimerRef.current = window.setTimeout(() => setToast(''), 2_600);
   }
 
   useEffect(() => {
@@ -91,11 +86,12 @@ function App() {
     if (!room) return undefined;
     const activeRoom = room;
     const socket = io(getSocketUrl(), {
+      transports: ['websocket', 'polling'],
       autoConnect: false,
       reconnection: true,
       reconnectionAttempts: Infinity,
-      reconnectionDelay: 700,
-      reconnectionDelayMax: 5_000,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 3_000,
       timeout: 8_000,
     });
     socketRef.current = socket;
@@ -108,18 +104,18 @@ function App() {
         sessionId: activeRoom.sessionId,
       }, (result) => {
         if (!result?.ok) {
-          setRoomError(result?.error || 'This room is no longer available.');
+          setRoomError(result?.error || 'Room is unavailable or has expired.');
           setPage('unavailable');
           setRoom(null);
           return;
         }
         if (result.role !== activeRoom.role) {
-          setRoomError('Room membership could not be verified. Join again using the complete room code.');
+          setRoomError('Room membership could not be verified.');
           setPage('unavailable');
           setRoom(null);
           return;
         }
-        setPeerConnected(result.peerConnected);
+        setPeerConnected(Boolean(result.peerConnected));
         setConnection('connected');
       });
     });
@@ -138,17 +134,17 @@ function App() {
       if (roomId !== activeRoom.roomId) return;
       try {
         const message = await decryptMessage(serialized, activeRoom.key, activeRoom.roomId);
-        setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message]);
+        setMessages((curr) => curr.some((m) => m.id === message.id) ? curr : [...curr, message]);
       } catch {
-        notify('A received message failed its integrity check and was not shown.');
+        notify('Message failed decryption check.');
       }
     });
     socket.on('message:deleted', ({ messageId }) => {
-      setMessages((current) => current.filter((message) => message.id !== messageId));
+      setMessages((curr) => curr.filter((m) => m.id !== messageId));
     });
     socket.on('room:cleared', () => {
       setMessages([]);
-      notify('Chat cleared by your peer.');
+      notify('Chat cleared by peer.');
     });
     socket.on('room:ended', () => {
       setRoomError('This secure room has been ended.');
@@ -182,9 +178,10 @@ function App() {
       });
       const secret = randomRoomSecret();
       const key = await deriveRoomKey(secret, created.roomId);
-      const code = `${created.roomId}.${created.joinCapability}`;
+      const code = created.roomId;
       const invitationUrl = new URL(`${window.location.origin}${window.location.pathname}`);
       invitationUrl.hash = new URLSearchParams({ room: code, secret }).toString();
+
       setRoom({
         roomId: created.roomId,
         code,
@@ -200,7 +197,7 @@ function App() {
       setMessages([]);
       setPeerConnected(false);
       setPage('room');
-      notify('Secure room created. Share the private invitation with your peer.');
+      notify('Room created. Share the code or invite link.');
     } catch (error) {
       setRoomError(error.message);
       setPage('connection-error');
@@ -210,20 +207,29 @@ function App() {
   }
 
   async function joinRoom(event) {
-    event.preventDefault();
+    event?.preventDefault();
     setJoinError('');
-    const code = joinCode.trim();
+    const rawCode = joinCode.trim();
     const secret = joinSecret.trim();
-    if (!ROOM_CODE_PATTERN.test(code)) {
-      setJoinError('Enter the complete room code, including its access suffix.');
+
+    if (!rawCode) {
+      setJoinError('Please enter a room code.');
       return;
     }
-    if (!SECRET_PATTERN.test(secret)) {
-      setJoinError('Enter the 32-byte room secret or open the complete invitation link.');
+    if (!secret || secret.length < 4) {
+      setJoinError('Secret must be at least 4 characters.');
       return;
     }
 
-    const [roomId, capability] = code.split('.');
+    let roomId = rawCode;
+    let capability = rawCode;
+    if (rawCode.includes('.')) {
+      [roomId, capability] = rawCode.split('.');
+    } else {
+      roomId = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      capability = roomId;
+    }
+
     setBusy(true);
     try {
       const key = await deriveRoomKey(secret, roomId);
@@ -234,7 +240,7 @@ function App() {
       });
       setRoom({
         roomId,
-        code,
+        code: roomId,
         secret,
         key,
         role: membership.role,
@@ -247,7 +253,7 @@ function App() {
       setMessages([]);
       setPeerConnected(false);
       setPage('room');
-      notify('Joined securely. Messages are encrypted in your browser.');
+      notify('Joined room securely.');
     } catch (error) {
       setJoinError(error.message);
     } finally {
@@ -260,13 +266,13 @@ function App() {
       await navigator.clipboard.writeText(value);
       notify(successMessage);
     } catch {
-      notify('Clipboard access was blocked. Select and copy the text instead.');
+      notify('Failed to copy. Please select and copy manually.');
     }
   }
 
   async function sendMessage(event) {
     event?.preventDefault();
-    const text = draft;
+    const text = draft.trim();
     if (!room || !text.length || sending) return;
     setSending(true);
     setDraft('');
@@ -276,8 +282,7 @@ function App() {
         roomId: room.roomId,
         envelope: serialized,
       });
-      setMessages((current) => [...current, { ...envelope, text }]);
-      notify('Message sent securely.');
+      setMessages((curr) => [...curr, { ...envelope, text }]);
     } catch (error) {
       setDraft(text);
       notify(error.message);
@@ -287,10 +292,10 @@ function App() {
   }
 
   async function deleteMessage(messageId) {
-    if (!window.confirm('Delete this message for everyone in the room?')) return;
+    if (!window.confirm('Delete this message for everyone?')) return;
     try {
       await emitWithAck(socketRef.current, 'message:delete', { roomId: room.roomId, messageId });
-      setMessages((current) => current.filter((message) => message.id !== messageId));
+      setMessages((curr) => curr.filter((m) => m.id !== messageId));
     } catch (error) {
       notify(error.message);
     }
@@ -298,7 +303,7 @@ function App() {
 
   async function clearChat() {
     if (!messages.length) return;
-    if (!window.confirm('Clear every message for both participants? This cannot be undone.')) return;
+    if (!window.confirm('Clear all messages for everyone in the room?')) return;
     try {
       await emitWithAck(socketRef.current, 'room:clear', { roomId: room.roomId });
       setMessages([]);
@@ -319,7 +324,7 @@ function App() {
   }
 
   async function endRoom() {
-    if (!room || !window.confirm('End this room for everyone? The room and its invitation will stop working.')) return;
+    if (!room || !window.confirm('End room for everyone? All messages will disappear.')) return;
     setBusy(true);
     try {
       await apiRequest(`/rooms/${room.roomId}`, {
@@ -362,20 +367,24 @@ function App() {
   }
 
   return (
-    <main className="app-shell min-h-screen">
-      <div className="ambient ambient-one" aria-hidden="true" />
-      <div className="ambient ambient-two" aria-hidden="true" />
+    <main className="app-shell">
       <header className="topbar">
         <button className="brand" onClick={() => setPage('home')} aria-label="SecureCode home">
-          <span className="brand-mark"><LockKeyhole size={19} strokeWidth={2.2} /></span>
+          <span className="brand-mark"><LockKeyhole size={18} strokeWidth={2.4} /></span>
           <span>secure<span className="brand-accent">code</span></span>
         </button>
-        <div className="topbar-note"><span className="topbar-dot" /> End-to-end encrypted</div>
+        <div className="topbar-status">
+          <span className="status-dot" /> End-to-End Encrypted
+        </div>
       </header>
 
       <div className="page-content">
         {page === 'home' && (
-          <HomePage onCreate={createRoom} onJoin={() => { setJoinError(''); setPage('join'); }} busy={busy} />
+          <HomePage
+            onCreate={createRoom}
+            onJoin={() => { setJoinError(''); setPage('join'); }}
+            busy={busy}
+          />
         )}
         {page === 'join' && (
           <JoinPage
@@ -392,16 +401,16 @@ function App() {
         {page === 'unavailable' && (
           <StatusPage
             icon={<Clock3 size={24} />}
-            title="This room is unavailable"
-            description={roomError || 'The room may have expired, been ended, or its server may have restarted.'}
+            title="Room Unavailable"
+            description={roomError || 'This room has expired, ended, or does not exist.'}
             onBack={() => { setRoomError(''); setPage('home'); }}
           />
         )}
         {page === 'connection-error' && (
           <StatusPage
             icon={<CircleAlert size={24} />}
-            title="Could not create a room"
-            description={roomError || 'The SecureCode server could not be reached. Check the connection and try again.'}
+            title="Connection Error"
+            description={roomError || 'Could not connect to the server. Please try again.'}
             onBack={() => { setRoomError(''); setPage('home'); }}
             actionLabel="Try again"
             onAction={createRoom}
@@ -411,8 +420,7 @@ function App() {
       </div>
 
       <footer className="site-footer">
-        <span><ShieldCheck size={14} /> No accounts. No stored messages.</span>
-        <span>Rooms expire automatically after 30 minutes.</span>
+        <span>No accounts. Zero storage. Rooms auto-expire after 30 minutes.</span>
       </footer>
       <Toast message={toast} />
     </main>
@@ -421,274 +429,267 @@ function App() {
 
 function HomePage({ onCreate, onJoin, busy }) {
   return (
-    <section className="home-layout">
-      <div className="hero-copy">
-        <div className="eyebrow"><span className="eyebrow-line" /> PRIVATE BY DESIGN</div>
-        <h1>Share privately.<br /><span>Connect securely.</span></h1>
-        <p className="hero-subtitle">
-          Exchange passwords, API keys, and sensitive text in a private room.
-          No accounts, no history, no compromise.
-        </p>
-        <div className="hero-actions">
-          <button className="button button-primary" onClick={onCreate} disabled={busy}>
-            {busy ? <span className="spinner" /> : <Plus size={18} />}
-            {busy ? 'Creating room…' : 'Create secure room'}
-            {!busy && <ArrowRight size={17} className="button-trailing" />}
-          </button>
-          <button className="button button-secondary" onClick={onJoin}>
-            <Link2 size={17} /> Join existing room
-          </button>
-        </div>
-        <div className="trust-row">
-          <span><Fingerprint size={16} /> Browser-side encryption</span>
-          <span><Clock3 size={16} /> Temporary by design</span>
-          <span><UsersRound size={16} /> Just two people</span>
-        </div>
+    <section className="home-card">
+      <div className="home-icon">
+        <LockKeyhole size={28} />
+      </div>
+      <h1>Private & Temporary<br /><span className="brand-accent">Secure Messaging</span></h1>
+      <p className="home-desc">
+        Share passwords, secrets, and sensitive text in an encrypted 2-person room.
+        Nothing is ever saved on the server.
+      </p>
+
+      <div className="home-buttons">
+        <button className="btn btn-primary" onClick={onCreate} disabled={busy}>
+          {busy ? <span className="spinner" /> : <LockKeyhole size={16} />}
+          {busy ? 'Creating...' : 'Create Room'}
+          {!busy && <ArrowRight size={15} />}
+        </button>
+        <button className="btn btn-secondary" onClick={onJoin}>
+          <Link2 size={16} /> Join Room
+        </button>
       </div>
 
-      <div className="hero-visual">
-        <div className="visual-orbit orbit-outer" />
-        <div className="visual-orbit orbit-inner" />
-        <div className="visual-glow" />
-        <div className="security-card">
-          <div className="security-card-top">
-            <div className="mini-lock"><LockKeyhole size={19} /></div>
-            <div><span className="security-title">Private session</span><span className="security-subtitle">Just you and your peer</span></div>
-            <span className="live-indicator"><i /> LIVE</span>
-          </div>
-          <div className="secure-line"><span className="line-dot violet-dot" /><span /><span /></div>
-          <div className="secure-message">
-            <span className="message-label">ENCRYPTED MESSAGE</span>
-            <div className="cipher-text">••••••••••••••••••••••••••</div>
-            <div className="message-lock"><LockKeyhole size={13} /> Only your peer can read this</div>
-          </div>
-          <div className="card-footer">
-            <span><span className="secure-pulse" /> AES-256-GCM</span><span>End-to-end</span>
-          </div>
-        </div>
-        <div className="floating-chip chip-one"><ShieldCheck size={14} /> Zero knowledge</div>
-        <div className="floating-chip chip-two"><Sparkles size={14} /> No sign-up needed</div>
-        <div className="visual-caption"><span /> Your words stay yours.</div>
+      <div className="home-features">
+        <span><ShieldCheck size={14} /> AES-256-GCM</span>
+        <span><Clock3 size={14} /> 30m Auto-Expire</span>
+        <span><Users size={14} /> 2-Person Only</span>
       </div>
-
-      <div className="feature-strip">
-        <Feature icon={<KeyRound size={19} />} title="Encrypted in your browser" description="Your text is locked before it ever leaves your device." />
-        <Feature icon={<Clock3 size={19} />} title="Nothing sticks around" description="No message history. Rooms expire automatically." />
-        <Feature icon={<ShieldCheck size={19} />} title="No account needed" description="Start a private session in seconds. No personal details." />
-      </div>
-      <div className="privacy-note"><LockKeyhole size={15} /><span><strong>A note on privacy</strong> &nbsp; Room state is temporary and disappears if the server restarts. Anyone with the full invitation link can join.</span></div>
     </section>
-  );
-}
-
-function Feature({ icon, title, description }) {
-  return (
-    <article className="feature-item">
-      <span className="feature-icon">{icon}</span>
-      <div><h2>{title}</h2><p>{description}</p></div>
-    </article>
   );
 }
 
 function JoinPage({ code, secret, error, busy, onCodeChange, onSecretChange, onSubmit, onBack }) {
   return (
-    <section className="form-page">
-      <button className="back-link" onClick={onBack}><ArrowLeft size={16} /> Back to home</button>
-      <div className="form-card">
-        <div className="form-icon"><Link2 size={23} /></div>
-        <div className="eyebrow form-eyebrow"><span className="eyebrow-line" /> JOIN A PRIVATE ROOM</div>
-        <h1>Pick up the<br /><span>conversation.</span></h1>
-        <p className="form-intro">Enter the room code and its separate encryption secret. Both are needed to join securely.</p>
-        <form className="join-form" onSubmit={onSubmit}>
-          <label htmlFor="room-code">Room code</label>
+    <section className="join-card">
+      <button className="back-btn" onClick={onBack}>
+        <ArrowLeft size={15} /> Back
+      </button>
+
+      <h2>Join Room</h2>
+      <p className="card-desc">Enter the 6-character room code and secret.</p>
+
+      <form className="join-form" onSubmit={onSubmit}>
+        <div className="form-group">
+          <label htmlFor="room-code">Room Code</label>
           <input
             id="room-code"
+            className="input-code"
             autoComplete="off"
             spellCheck="false"
-            placeholder="Paste the complete room code"
+            maxLength={10}
+            placeholder="e.g. K9X2M4"
             value={code}
-            onChange={(event) => onCodeChange(event.target.value)}
+            onChange={(e) => onCodeChange(e.target.value.toUpperCase())}
+            autoFocus
           />
-          <label htmlFor="room-secret">Encryption secret</label>
-          <div className="secret-input-wrap">
-            <KeyRound size={16} />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="room-secret">Secret</label>
+          <div className="secret-wrap">
+            <KeyRound size={15} className="input-icon" />
             <input
               id="room-secret"
-              type="password"
+              type="text"
               autoComplete="off"
               spellCheck="false"
-              placeholder="Paste the room secret"
+              maxLength={32}
+              placeholder="e.g. 7F3K9M"
               value={secret}
-              onChange={(event) => onSecretChange(event.target.value)}
+              onChange={(e) => onSecretChange(e.target.value)}
             />
           </div>
-          {error && <div className="form-error" role="alert"><CircleAlert size={16} />{error}</div>}
-          <button className="button button-primary form-submit" type="submit" disabled={busy}>
-            {busy ? <span className="spinner" /> : <LockKeyhole size={17} />}
-            {busy ? 'Joining securely…' : 'Join secure room'}
-            {!busy && <ArrowRight size={17} className="button-trailing" />}
-          </button>
-        </form>
-        <div className="form-security"><ShieldCheck size={15} /><span>Your secret stays in this browser and is never sent to the server.</span></div>
-      </div>
-      <div className="join-hint"><Sparkles size={15} /><span>Have an invitation link? Open it in this browser to fill in the details automatically.</span></div>
+        </div>
+
+        {error && <div className="form-error"><CircleAlert size={14} /> {error}</div>}
+
+        <button className="btn btn-primary btn-block" type="submit" disabled={busy}>
+          {busy ? <span className="spinner" /> : <LockKeyhole size={16} />}
+          {busy ? 'Connecting...' : 'Join Secure Room'}
+        </button>
+      </form>
     </section>
   );
 }
 
-function ChatRoom({ room, messages, connection, peerConnected, draft, setDraft, sending, scrollRef, onCopy, onSend, onDelete, onClear, onLeave, onEnd }) {
-  const statusLabels = {
-    connecting: 'Connecting',
-    connected: 'Connected',
-    reconnecting: 'Reconnecting',
-    disconnected: 'Disconnected',
-  };
+function ChatRoom({
+  room,
+  messages,
+  connection,
+  peerConnected,
+  draft,
+  setDraft,
+  sending,
+  scrollRef,
+  onCopy,
+  onSend,
+  onDelete,
+  onClear,
+  onLeave,
+  onEnd,
+}) {
   const expiryTime = formatTime(room.expiresAt);
-
-  async function copyRoomCode() {
-    await onCopy(room.code, 'Room code copied. Send the secret separately.');
-  }
 
   return (
     <main className="chat-shell">
       <header className="chat-topbar">
-        <button className="brand" onClick={onLeave} aria-label="Leave SecureCode room">
-          <span className="brand-mark"><LockKeyhole size={18} strokeWidth={2.2} /></span>
-          <span>secure<span className="brand-accent">code</span></span>
-        </button>
-        <div className="chat-top-actions">
-          <div className={`connection-pill connection-${connection}`}>
-            <span className="connection-dot" />{statusLabels[connection]}
+        <div className="chat-left">
+          <button className="brand" onClick={onLeave} aria-label="Leave room">
+            <span className="brand-mark"><LockKeyhole size={16} strokeWidth={2.4} /></span>
+            <span>secure<span className="brand-accent">code</span></span>
+          </button>
+          <div className={`status-badge status-${connection}`}>
+            <span className="status-dot" />
+            {connection === 'connected' ? (peerConnected ? 'Peer connected' : 'Waiting for peer') : connection}
           </div>
-          <button className="icon-button" onClick={onLeave} aria-label="Leave room" title="Leave room"><LogOut size={17} /></button>
+        </div>
+
+        <div className="chat-center-pills">
+          <button
+            className="info-pill"
+            onClick={() => onCopy(room.code, 'Room code copied!')}
+            title="Click to copy Room Code"
+          >
+            <span>Room:</span>
+            <strong>{room.code}</strong>
+            <Copy size={13} />
+          </button>
+
+          <button
+            className="info-pill"
+            onClick={() => onCopy(room.secret, 'Encryption secret copied!')}
+            title="Click to copy Secret"
+          >
+            <span>Secret:</span>
+            <strong>{room.secret}</strong>
+            <Copy size={13} />
+          </button>
+
+          {room.invitationUrl && (
+            <button
+              className="btn btn-sm btn-accent"
+              onClick={() => onCopy(room.invitationUrl, 'Invite link copied!')}
+              title="Copy 1-click invitation link"
+            >
+              <Link2 size={13} /> Copy Invite Link
+            </button>
+          )}
+        </div>
+
+        <div className="chat-actions">
+          <span className="expiry-tag" title={`Expires at ${expiryTime}`}>
+            <Clock3 size={13} /> {expiryTime}
+          </span>
+          <button
+            className="btn btn-sm btn-ghost"
+            onClick={onClear}
+            disabled={!messages.length}
+            title="Clear all messages"
+          >
+            <Trash2 size={14} /> Clear
+          </button>
+          <button
+            className="btn btn-sm btn-ghost"
+            onClick={onLeave}
+            title="Leave room"
+          >
+            <LogOut size={14} /> Leave
+          </button>
+          {room.role === 'owner' && (
+            <button
+              className="btn btn-sm btn-danger"
+              onClick={onEnd}
+              title="End room for everyone"
+            >
+              <X size={14} /> End
+            </button>
+          )}
         </div>
       </header>
-      <div className="chat-main">
-        <aside className="room-sidebar">
-          <button className="back-link room-back" onClick={onLeave}><ArrowLeft size={15} /> Leave room</button>
-          <div className="room-label"><span className="room-label-icon"><LockKeyhole size={15} /></span> SECURE ROOM</div>
-          <h1>Private<br /><span>session</span></h1>
-          <p className="room-description">A quiet space for your conversation. Only your invited peer can read these messages.</p>
-          <div className="participants">
-            <div className="participants-title">PARTICIPANTS <span>2 max</span></div>
-            <div className="participant-row">
-              <span className="avatar avatar-you">{room.role === 'owner' ? 'Y' : 'P'}</span>
-              <span><strong>You</strong><small>Room creator</small></span><i className="presence-online" />
-            </div>
-            <div className="participant-row">
-              <span className="avatar avatar-peer">{room.role === 'owner' ? 'P' : 'Y'}</span>
-              <span><strong>Your peer</strong><small>{peerConnected ? 'In this room' : 'Waiting to connect'}</small></span>
-              <i className={peerConnected ? 'presence-online' : 'presence-offline'} />
-            </div>
-          </div>
-          <div className="room-encryption">
-            <div className="encryption-heading"><ShieldCheck size={17} /> End-to-end encrypted</div>
-            <p>Messages are encrypted on your device. The server only relays ciphertext.</p>
-            <div className="encryption-algorithm"><span /> AES-256-GCM <span className="algorithm-divider">·</span> HKDF-SHA-256</div>
-          </div>
-          {room.role === 'owner' && room.invitationUrl && (
-            <div className="invite-panel">
-              <div className="invite-heading"><Link2 size={15} /> INVITE YOUR PEER</div>
-              <p>The room code includes a separate access key. Share the encryption secret privately too.</p>
-              <button className="button button-invite" onClick={() => onCopy(room.invitationUrl, 'Private invitation link copied.')}>
-                <Copy size={15} /> Copy invitation link
-              </button>
-              <div className="manual-share">
-                <span>ROOM CODE</span>
-                <code>{room.code}</code>
-                <button className="text-copy" onClick={copyRoomCode}><Copy size={13} /> Copy code</button>
-                <span>ENCRYPTION SECRET</span>
-                <code>{room.secret}</code>
-                <button className="text-copy" onClick={() => onCopy(room.secret, 'Encryption secret copied. Share it separately.')}>
-                  <Copy size={13} /> Copy secret
-                </button>
-              </div>
-            </div>
-          )}
-          <div className="room-lifetime"><Clock3 size={15} /><span>Expires at {expiryTime}</span></div>
-          <div className="sidebar-bottom">
-            <button className="button button-quiet" onClick={onClear} disabled={!messages.length}><Trash2 size={15} /> Clear chat</button>
-            {room.role === 'owner' && <button className="end-room-button" onClick={onEnd}><X size={15} /> End room for everyone</button>}
-          </div>
-        </aside>
 
-        <section className="conversation">
-          <div className="conversation-header">
-            <div><div className="conversation-kicker"><span className="conversation-live" /> LIVE CONVERSATION</div><h2>Secure chat</h2></div>
-            <div className="message-count"><MessageSquareText size={15} /> {messages.length} {messages.length === 1 ? 'message' : 'messages'}</div>
+      {!peerConnected && (
+        <div className="waiting-bar">
+          <Users size={15} />
+          <span>Waiting for your peer. Share Room Code <strong>{room.code}</strong> and Secret <strong>{room.secret}</strong>, or send the invite link.</span>
+        </div>
+      )}
+
+      <div className="chat-feed" aria-live="polite">
+        {messages.length === 0 ? (
+          <div className="chat-empty">
+            <LockKeyhole size={28} className="empty-icon" />
+            <h3>End-to-End Encrypted Room</h3>
+            <p>Messages are encrypted directly in your browser. Nothing is stored.</p>
           </div>
-          <div className="conversation-feed" aria-live="polite" aria-label="Encrypted messages">
-            {!peerConnected && (
-              <div className="waiting-banner"><UsersRound size={17} /><span><strong>Waiting for your peer.</strong> Send them the invitation link to start chatting.</span></div>
-            )}
-            {messages.length === 0 ? (
-              <div className="empty-chat">
-                <div className="empty-chat-icon"><MessageSquareText size={23} /></div>
-                <h3>Your conversation starts here</h3>
-                <p>Messages are encrypted before leaving your browser and are never saved as history.</p>
-                <div className="empty-chat-tip"><ArrowDown size={14} /> Type a message below to begin</div>
+        ) : (
+          messages.map((m) => {
+            const isOwn = m.sender === room.role;
+            return (
+              <div key={m.id} className={`message-row ${isOwn ? 'message-own' : 'message-peer'}`}>
+                <div className="message-bubble">
+                  <div className="message-header">
+                    <span className="message-sender">{isOwn ? 'You' : 'Peer'}</span>
+                    <span className="message-time">{formatTime(m.createdAt)}</span>
+                  </div>
+                  <div className="message-body">{m.text}</div>
+                  <div className="message-actions">
+                    <button onClick={() => onCopy(m.text, 'Copied message.')} title="Copy">
+                      <Copy size={12} />
+                    </button>
+                    <button onClick={() => onDelete(m.id)} title="Delete for all">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
               </div>
-            ) : messages.map((message) => (
-              <article className={`message-card ${message.sender === room.role ? 'message-own' : 'message-peer'}`} key={message.id}>
-                <div className="message-meta">
-                  <span className={`message-avatar ${message.sender === room.role ? 'message-avatar-you' : 'message-avatar-peer'}`}>{message.sender === room.role ? 'Y' : 'P'}</span>
-                  <strong>{message.sender === room.role ? 'You' : 'Peer'}</strong>
-                  <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>
-                </div>
-                <p className="message-text">{message.text}</p>
-                <div className="message-tools">
-                  <button onClick={() => onCopy(message.text, 'Message copied to clipboard.')} aria-label="Copy message"><Copy size={14} /> Copy</button>
-                  <button onClick={() => onDelete(message.id)} aria-label="Delete message for everyone"><Trash2 size={14} /> Delete</button>
-                </div>
-              </article>
-            ))}
-            <div ref={scrollRef} />
-          </div>
-          <form className="composer" onSubmit={onSend}>
-            <div className="composer-topline">
-              <span><LockKeyhole size={13} /> Encrypted before sending</span>
-              <span>{draft.length.toLocaleString()} / 8,000</span>
-            </div>
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value.slice(0, 8_000))}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                  event.preventDefault();
-                  onSend(event);
-                }
-              }}
-              maxLength={8_000}
-              rows={3}
-              placeholder={peerConnected ? 'Write a private message…' : 'Your peer needs to join before you can send.'}
-              aria-label="Message"
-              disabled={!peerConnected || connection !== 'connected' || sending}
-            />
-            <div className="composer-bottom">
-              <span>Press <kbd>Enter</kbd> to send <span className="key-divider">·</span> <kbd>Shift + Enter</kbd> for a new line</span>
-              <button className="send-button" type="submit" disabled={!draft.length || !peerConnected || connection !== 'connected' || sending}>
-                {sending ? <span className="spinner" /> : <Send size={15} />} Send securely
-              </button>
-            </div>
-          </form>
-          <div className="conversation-footnote"><CheckCheck size={14} /> Your shared content is never stored on the server.</div>
-        </section>
+            );
+          })
+        )}
+        <div ref={scrollRef} />
       </div>
-      <span className="visually-hidden" aria-live="polite">{connection === 'connected' ? 'Connected to secure room' : statusLabels[connection]}</span>
+
+      <form className="chat-composer" onSubmit={onSend}>
+        <textarea
+          rows={2}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value.slice(0, 8_000))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              onSend(e);
+            }
+          }}
+          placeholder={peerConnected ? 'Type an encrypted message… (Enter to send)' : 'Waiting for peer to join…'}
+          disabled={!peerConnected || connection !== 'connected' || sending}
+        />
+        <button
+          className="btn btn-primary send-btn"
+          type="submit"
+          disabled={!draft.trim().length || !peerConnected || connection !== 'connected' || sending}
+        >
+          {sending ? <span className="spinner" /> : <Send size={15} />}
+        </button>
+      </form>
     </main>
   );
 }
 
 function StatusPage({ icon, title, description, onBack, actionLabel, onAction, busy }) {
   return (
-    <section className="status-page">
+    <section className="status-card">
       <div className="status-icon">{icon}</div>
-      <div className="eyebrow"><span className="eyebrow-line" /> SECURECODE</div>
-      <h1>{title}</h1>
+      <h2>{title}</h2>
       <p>{description}</p>
       <div className="status-actions">
-        {actionLabel && <button className="button button-primary" onClick={onAction} disabled={busy}>{busy ? <span className="spinner" /> : <Plus size={17} />}{actionLabel}</button>}
-        <button className="button button-secondary" onClick={onBack}><ArrowLeft size={16} /> Back to home</button>
+        {actionLabel && (
+          <button className="btn btn-primary" onClick={onAction} disabled={busy}>
+            {busy ? <span className="spinner" /> : actionLabel}
+          </button>
+        )}
+        <button className="btn btn-secondary" onClick={onBack}>
+          <ArrowLeft size={15} /> Back to Home
+        </button>
       </div>
     </section>
   );
@@ -696,7 +697,11 @@ function StatusPage({ icon, title, description, onBack, actionLabel, onAction, b
 
 function Toast({ message }) {
   if (!message) return null;
-  return <div className="toast" role="status"><Check size={16} />{message}</div>;
+  return (
+    <div className="toast" role="status">
+      <Check size={14} /> {message}
+    </div>
+  );
 }
 
 export default App;

@@ -1,18 +1,24 @@
 const textEncoder = new TextEncoder();
+const SECRET_CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 
-export function randomRoomSecret() {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return encodeBase64Url(bytes);
+export function randomRoomSecret(length = 6) {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  let secret = '';
+  for (let i = 0; i < length; i++) {
+    secret += SECRET_CHARS[bytes[i] % SECRET_CHARS.length];
+  }
+  return secret;
 }
 
 export async function deriveRoomKey(secret, roomId) {
-  const secretBytes = decodeBase64Url(secret);
-  if (secretBytes.length !== 32) {
-    throw new Error('The room secret must contain 256 bits.');
+  if (!secret || typeof secret !== 'string' || secret.trim().length < 4) {
+    throw new Error('The room secret must contain at least 4 characters.');
   }
 
-  const keyMaterial = await crypto.subtle.importKey('raw', secretBytes, 'HKDF', false, ['deriveKey']);
-  secretBytes.fill(0);
+  const cleanSecret = secret.trim();
+  const secretBytes = textEncoder.encode(cleanSecret);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', secretBytes);
+  const keyMaterial = await crypto.subtle.importKey('raw', hashBuffer, 'HKDF', false, ['deriveKey']);
 
   return crypto.subtle.deriveKey(
     {

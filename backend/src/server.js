@@ -4,6 +4,8 @@ const cors = require("cors");
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const helmet = require("helmet");
+const fs = require("node:fs");
+const path = require("node:path");
 const { createServer } = require("node:http");
 const { Server } = require("socket.io");
 const { z } = require("zod");
@@ -38,12 +40,14 @@ function createSecureCodeServer({
   const roomService = new RoomService({ maxRooms, roomLifetimeMs });
   const app = express();
   const httpServer = createServer(app);
-  const originAllowed = (origin) => !origin || frontendOrigins.includes(origin);
+  const allowAllOrigins = frontendOrigins.includes("*");
+  const originAllowed = (origin) => !origin || allowAllOrigins || frontendOrigins.includes(origin);
   const io = new Server(httpServer, {
     cors: {
       origin: (origin, callback) => callback(null, originAllowed(origin)),
       methods: ["GET", "POST"],
     },
+    transports: ["websocket", "polling"],
     maxHttpBufferSize: 64 * 1024,
     pingTimeout: 20_000,
     pingInterval: 25_000,
@@ -181,6 +185,19 @@ function createSecureCodeServer({
       res.status(200).json({ ended: true });
     },
   );
+
+  // Serve static frontend build if present
+  const staticPath = [
+    path.resolve(__dirname, "../../frontend/dist"),
+    path.resolve(__dirname, "../public"),
+  ].find((p) => fs.existsSync(p));
+
+  if (staticPath) {
+    app.use(express.static(staticPath));
+    app.get(/^(?!\/api).*/, (_req, res) => {
+      res.sendFile(path.join(staticPath, "index.html"));
+    });
+  }
 
   app.use((err, _req, res, _next) => {
     if (err.type === "entity.too.large") {

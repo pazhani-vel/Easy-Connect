@@ -42,9 +42,9 @@ test("health, room authorization, termination, and oversized HTTP requests", asy
     assert.deepEqual(await health.json(), { status: "ok" });
 
     const room = await createRoom(server.baseUrl);
-    assert.match(room.roomId, /^[A-Za-z0-9_-]{22}$/u);
-    assert.equal(room.ownerCapability.length, 43);
-    assert.equal(room.joinCapability.length, 43);
+    assert.match(room.roomId, /^[A-Z0-9]{6}$/u);
+    assert.equal(room.ownerCapability.length, 32);
+    assert.equal(room.joinCapability, room.roomId);
 
     const verify = await fetch(`${server.baseUrl}/api/rooms/${room.roomId}`);
     assert.equal(verify.status, 200);

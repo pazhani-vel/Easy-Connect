@@ -64,9 +64,9 @@ test('derived AES keys are non-extractable and are bound to their room identifie
 
 test('room secret generation and derivation reject malformed or wrong-length secrets', async () => {
   const secret = randomRoomSecret();
-  assert.match(secret, /^[A-Za-z0-9_-]{43}$/u);
-  assert.equal(decodeBase64Url(secret).length, 32);
-  for (const invalidSecret of ['', 'A'.repeat(42), 'A'.repeat(44), '!'.repeat(43)]) {
+  assert.match(secret, /^[A-Za-z0-9]{6}$/u);
+  assert.equal(secret.length, 6);
+  for (const invalidSecret of ['', '   ', 'abc']) {
     await assert.rejects(deriveRoomKey(invalidSecret, roomId));
   }
 });

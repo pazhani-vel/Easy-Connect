@@ -1,11 +1,20 @@
 const { createHash, randomBytes, timingSafeEqual } = require("node:crypto");
 
-const ROOM_ID_BYTES = 16;
-const CAPABILITY_BYTES = 32;
+const ROOM_CODE_CHARS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const CAPABILITY_BYTES = 16;
 const MAX_ROOM_LIFETIME_MS = 2 * 60 * 60 * 1000;
 
 function hashCapability(capability) {
-  return createHash("sha256").update(capability, "utf8").digest();
+  return createHash("sha256").update(String(capability), "utf8").digest();
+}
+
+function generateRoomId(length = 6) {
+  const bytes = randomBytes(length);
+  let id = "";
+  for (let i = 0; i < length; i++) {
+    id += ROOM_CODE_CHARS[bytes[i] % ROOM_CODE_CHARS.length];
+  }
+  return id;
 }
 
 class RoomService {
@@ -28,11 +37,11 @@ class RoomService {
 
     let roomId;
     do {
-      roomId = randomBytes(ROOM_ID_BYTES).toString("base64url");
+      roomId = generateRoomId(6);
     } while (this.rooms.has(roomId));
 
-    const ownerCapability = randomBytes(CAPABILITY_BYTES).toString("base64url");
-    const joinCapability = randomBytes(CAPABILITY_BYTES).toString("base64url");
+    const ownerCapability = randomBytes(CAPABILITY_BYTES).toString("hex");
+    const joinCapability = roomId;
     const room = {
       id: roomId,
       createdAt: now,
@@ -55,6 +64,7 @@ class RoomService {
   }
 
   getRoom(roomId, now = Date.now()) {
+    if (!roomId) return null;
     const room = this.rooms.get(roomId);
     if (!room) return null;
     if (room.expiresAt <= now) return null;
@@ -62,6 +72,7 @@ class RoomService {
   }
 
   getRole(room, capability) {
+    if (!room || !capability) return null;
     const providedHash = hashCapability(capability);
     if (timingSafeEqual(room.capabilities.owner, providedHash)) return "owner";
     if (timingSafeEqual(room.capabilities.peer, providedHash)) return "peer";
@@ -76,4 +87,4 @@ class RoomService {
   }
 }
 
-module.exports = { MAX_ROOM_LIFETIME_MS, RoomService };
+module.exports = { MAX_ROOM_LIFETIME_MS, RoomService, generateRoomId };

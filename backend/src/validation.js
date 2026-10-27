@@ -1,8 +1,11 @@
 const { z } = require("zod");
 
-const roomIdSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/);
-const capabilitySchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
-const roomCodeSchema = z.string().regex(/^[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/);
+// Room ID: 6-character simple code or legacy 22-char ID
+const roomIdSchema = z.string().regex(/^(?:[A-Za-z0-9]{6}|[A-Za-z0-9_-]{22})$/);
+// Capability: 6-character peer code, 32-char hex owner token, or legacy 43-char capability
+const capabilitySchema = z.string().regex(/^(?:[A-Za-z0-9]{6}|[A-Za-z0-9]{32}|[A-Za-z0-9_-]{43})$/);
+// Room code: simple 6-char code or composite
+const roomCodeSchema = z.string().regex(/^(?:[A-Za-z0-9]{6}|[A-Za-z0-9]{6}\.[A-Za-z0-9]{6}|[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43})$/);
 const messageIdSchema = z.string().uuid();
 
 const createRoomSchema = z.object({}).strict();

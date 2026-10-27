@@ -7,11 +7,11 @@ test("room service creates unpredictable room IDs and separate owner/peer capabi
   const first = service.createRoom(100);
   const second = service.createRoom(100);
 
-  assert.match(first.room.id, /^[A-Za-z0-9_-]{22}$/u);
-  assert.equal(first.room.id.length, 22);
+  assert.match(first.room.id, /^[A-Z0-9]{6}$/u);
+  assert.equal(first.room.id.length, 6);
   assert.notEqual(first.room.id, second.room.id);
-  assert.equal(first.ownerCapability.length, 43);
-  assert.equal(first.joinCapability.length, 43);
+  assert.equal(first.ownerCapability.length, 32);
+  assert.equal(first.joinCapability, first.room.id);
   assert.notEqual(first.ownerCapability, first.joinCapability);
   assert.equal(first.room.createdAt, 100);
   assert.equal(first.room.expiresAt, 100 + 30 * 60 * 1000);
@@ -26,7 +26,7 @@ test("capability checks distinguish roles and reject incorrect capabilities", ()
 
   assert.equal(service.getRole(room, ownerCapability), "owner");
   assert.equal(service.getRole(room, joinCapability), "peer");
-  assert.equal(service.getRole(room, "A".repeat(43)), null);
+  assert.equal(service.getRole(room, "WRONGCODE"), null);
 });
 
 test("room lookup enforces the exact expiry boundary and destroy is idempotent", () => {

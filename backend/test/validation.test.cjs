@@ -13,15 +13,18 @@ const {
   roomIdSchema,
 } = require("../src/validation");
 
-const roomId = "MDEyMzQ1Njc4OWFiY2RlZg";
-const capability = "A".repeat(43);
+const roomId = "K7M9XP";
+const capability = "K7M9XP";
 
 test("room IDs, room codes, capabilities, and message IDs enforce exact formats", () => {
   assert.equal(roomIdSchema.safeParse(roomId).success, true);
-  assert.equal(roomIdSchema.safeParse(`${roomId}x`).success, false);
+  assert.equal(roomIdSchema.safeParse("MDEyMzQ1Njc4OWFiY2RlZg").success, true);
+  assert.equal(roomIdSchema.safeParse("").success, false);
+  assert.equal(roomIdSchema.safeParse("abc!").success, false);
   assert.equal(roomIdSchema.safeParse(`${roomId}.`).success, false);
+  assert.equal(roomCodeSchema.safeParse(roomId).success, true);
   assert.equal(roomCodeSchema.safeParse(`${roomId}.${capability}`).success, true);
-  assert.equal(roomCodeSchema.safeParse(`${roomId}.${"A".repeat(42)}`).success, false);
+  assert.equal(roomCodeSchema.safeParse("").success, false);
   assert.equal(capabilityBodySchema.safeParse({ capability }).success, true);
   assert.equal(capabilityBodySchema.safeParse({ capability, secret: "not-allowed" }).success, false);
   assert.equal(deleteEventSchema.safeParse({ roomId, messageId: randomUUID() }).success, true);
